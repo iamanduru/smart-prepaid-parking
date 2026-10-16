@@ -12,6 +12,16 @@ enum UserRole {
   ADMINISTRATOR
 }
 
+enum ParkingSessionStatus {
+  CREATED
+  ACTIVE
+  FEE_CALCULATED
+  PAYMENT_PENDING
+  AWAITING_RECHARGE
+  PAID
+  CLOSED
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -33,9 +43,10 @@ model Vehicle {
   make        String
   model       String
 
-  ownerId String
-  owner   User        @relation(fields: [ownerId], references: [id], onDelete: Restrict)
-  tag     VehicleTag?
+  ownerId         String
+  owner           User             @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  tag             VehicleTag?
+  parkingSessions ParkingSession[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -69,6 +80,27 @@ model ParkingFacility {
   facilityId String @id @default(uuid())
   name       String
   location   String
+
+  parkingSessions ParkingSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ParkingSession {
+  sessionId String @id @default(uuid())
+
+  entryTime DateTime?
+  exitTime  DateTime?
+  fee       Int?
+
+  status ParkingSessionStatus @default(CREATED)
+
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [vehicleId], onDelete: Restrict)
+
+  facilityId String
+  facility   ParkingFacility @relation(fields: [facilityId], references: [facilityId], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
