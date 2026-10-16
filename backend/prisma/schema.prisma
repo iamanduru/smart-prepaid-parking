@@ -21,6 +21,7 @@ model User {
   role         UserRole @default(VEHICLE_OWNER)
 
   vehicles Vehicle[]
+  wallet   Wallet?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -46,6 +47,19 @@ model VehicleTag {
 
   vehicleId String  @unique
   vehicle   Vehicle @relation(fields: [vehicleId], references: [vehicleId], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Wallet {
+  walletId String @id @default(uuid())
+
+  // Stored in the smallest currency unit to avoid floating-point errors.
+  balance Int @default(0)
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
