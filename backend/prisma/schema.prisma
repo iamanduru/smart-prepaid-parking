@@ -64,3 +64,12 @@ model Wallet {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model ParkingFacility {
+  facilityId String @id @default(uuid())
+  name       String
+  location   String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
