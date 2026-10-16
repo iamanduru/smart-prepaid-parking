@@ -22,6 +22,17 @@ enum ParkingSessionStatus {
   CLOSED
 }
 
+enum TransactionType {
+  RECHARGE
+  PARKING_FEE
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -66,11 +77,12 @@ model VehicleTag {
 model Wallet {
   walletId String @id @default(uuid())
 
-  // Stored in the smallest currency unit to avoid floating-point errors.
   balance Int @default(0)
 
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  transactions Transaction[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -101,6 +113,25 @@ model ParkingSession {
 
   facilityId String
   facility   ParkingFacility @relation(fields: [facilityId], references: [facilityId], onDelete: Restrict)
+
+  transaction Transaction?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Transaction {
+  transactionId String @id @default(uuid())
+
+  amount Int
+  type   TransactionType
+  status TransactionStatus @default(PENDING)
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [walletId], onDelete: Restrict)
+
+  parkingSessionId String?         @unique
+  parkingSession   ParkingSession? @relation(fields: [parkingSessionId], references: [sessionId], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
