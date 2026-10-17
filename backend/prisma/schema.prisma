@@ -94,6 +94,7 @@ model ParkingFacility {
   location   String
 
   parkingSessions ParkingSession[]
+  rates           ParkingRate[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -135,4 +136,23 @@ model Transaction {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ParkingRate {
+  rateId String @id @default(uuid())
+
+  label      String
+  minMinutes Int
+  maxMinutes Int
+  price      Int
+
+  isActive Boolean @default(true)
+
+  facilityId String
+  facility   ParkingFacility @relation(fields: [facilityId], references: [facilityId], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([facilityId, minMinutes, maxMinutes])
 }
