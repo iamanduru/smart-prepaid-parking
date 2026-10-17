@@ -6,6 +6,8 @@ import { env } from "./config/env";
 import { errorHandler } from "./middleware/error.middleware";
 import { notFoundHandler } from "./middleware/not-found.middleware";
 
+import authRouter from "./routes/auth.routes";
+
 const app = express();
 
 app.disable("x-powered-by");
@@ -29,6 +31,8 @@ app.get("/api/health", (_req, res) => {
 });
 
 // Routes here
+app.use("/api/auth", authRouter);
+
 
 app.use(notFoundHandler);
 

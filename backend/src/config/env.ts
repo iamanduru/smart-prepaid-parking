@@ -14,6 +14,8 @@ const envSchema = z.object({
   .string()
   .min(1)
   .startsWith("postgresql://"),
+
+  JWT_SECRET: z.string().min(32),
 });
 
 const result = envSchema.safeParse(process.env);
