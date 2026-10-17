@@ -9,6 +9,11 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
 
   FRONTEND_URL: z.url(),
+
+  DATABASE_URL: z
+  .string()
+  .min(1)
+  .startsWith("postgresql://"),
 });
 
 const result = envSchema.safeParse(process.env);
