@@ -8,6 +8,7 @@ import { notFoundHandler } from "./middleware/not-found.middleware";
 
 import authRouter from "./routes/auth.routes";
 import vehicleRouter from "./routes/vehicle.routes";
+import walletRouter from "./routes/wallet.routes";
 
 const app = express();
 
@@ -34,6 +35,7 @@ app.get("/api/health", (_req, res) => {
 // Routes here
 app.use("/api/auth", authRouter);
 app.use("/api/vehicles", vehicleRouter);
+app.use("/api/wallet", walletRouter);
 
 app.use(notFoundHandler);
 
