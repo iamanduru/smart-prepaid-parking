@@ -3,7 +3,7 @@ import jwt, { JwtPayload } from "jsonwebtoken";
 
 import { env } from "../config/env";
 
-type UserRole = "VEHICLE_OWNER" | "ADMINISTRATOR";
+export type UserRole = "VEHICLE_OWNER" | "ADMINISTRATOR";
 
 export interface AuthenticatedRequest extends Request {
   user?: {
