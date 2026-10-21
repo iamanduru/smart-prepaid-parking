@@ -2,6 +2,7 @@ import { Router } from "express";
 
 import {
   recharge,
+  viewTransactions,
   viewWallet,
 } from "../controllers/wallet.controller";
 import { authenticate } from "../middleware/auth.middleware";
@@ -14,5 +15,9 @@ router.use(requireRole("VEHICLE_OWNER"));
 
 router.get("/", viewWallet);
 router.post("/recharge", recharge);
+router.get(
+  "/transactions",
+  viewTransactions
+);
 
 export default router;

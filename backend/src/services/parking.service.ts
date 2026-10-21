@@ -556,3 +556,56 @@ export async function endParkingSession(
     gateAction: "OPEN",
   };
 }
+
+export async function getParkingHistory(
+  ownerId: string
+) {
+  const sessions = await prisma.parkingSession.findMany({
+    where: {
+      vehicle: {
+        ownerId,
+      },
+    },
+
+    select: {
+      sessionId: true,
+      entryTime: true,
+      exitTime: true,
+      fee: true,
+      status: true,
+
+      facility: {
+        select: {
+          facilityId: true,
+          name: true,
+          location: true,
+        },
+      },
+
+      vehicle: {
+        select: {
+          vehicleId: true,
+          plateNumber: true,
+          make: true,
+          model: true,
+        },
+      },
+
+      transaction: {
+        select: {
+          transactionId: true,
+          amount: true,
+          type: true,
+          status: true,
+          createdAt: true,
+        },
+      },
+    },
+
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  return sessions;
+}

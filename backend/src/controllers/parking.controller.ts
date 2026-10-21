@@ -6,6 +6,7 @@ import {
 
 import {
   endParkingSession,
+  getParkingHistory,
   startParkingSession,
 } from "../services/parking.service";
 
@@ -13,7 +14,7 @@ import {
   parkingEntrySchema,
   parkingExitSchema,
 } from "../validators/parking.validator";
-
+import { AuthenticatedRequest } from "../middleware/auth.middleware";
 export async function parkingEntry(
   req: Request,
   res: Response,
@@ -237,6 +238,35 @@ export async function parkingExit(
       }
     }
 
+    next(error);
+  }
+}
+
+export async function parkingHistory(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    const history = await getParkingHistory(
+      req.user.id
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        history,
+        currency: "RWF",
+      },
+    });
+  } catch (error) {
     next(error);
   }
 }
