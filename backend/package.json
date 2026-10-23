@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "create-admin": "tsx prisma/create-admin.ts"
   },
   "keywords": [],
   "author": "",
