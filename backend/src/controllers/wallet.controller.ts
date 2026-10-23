@@ -1,13 +1,16 @@
 import { NextFunction, Response } from "express";
 
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
+
 import {
   getWallet,
   getWalletTransactions,
   rechargeWallet,
 } from "../services/wallet.service";
-import { rechargeWalletSchema } from "../validators/wallet.validator";
 
+import { createAuditLog } from "../services/audit.service";
+
+import { rechargeWalletSchema } from "../validators/wallet.validator";
 
 export async function viewWallet(
   req: AuthenticatedRequest,
@@ -26,6 +29,7 @@ export async function viewWallet(
 
     return res.status(200).json({
       success: true,
+
       data: {
         wallet,
         currency: "RWF",
@@ -59,24 +63,66 @@ export async function recharge(
       });
     }
 
-    const validation = rechargeWalletSchema.safeParse(req.body);
+    /*
+     * Validate the requested recharge amount
+     * and phone number.
+     */
+    const validation =
+      rechargeWalletSchema.safeParse(req.body);
 
     if (!validation.success) {
       return res.status(400).json({
         success: false,
         message: "Invalid recharge data",
-        errors: validation.error.flatten().fieldErrors,
+        errors:
+          validation.error.flatten().fieldErrors,
       });
     }
 
+    /*
+     * Perform the wallet recharge.
+     *
+     * In the current development version this uses
+     * our mock successful payment flow.
+     */
     const result = await rechargeWallet(
       req.user.id,
       validation.data
     );
 
+    /*
+     * Record the successful recharge in the
+     * security/accountability audit trail.
+     */
+    await createAuditLog({
+      actorId: req.user.id,
+      action: "WALLET_RECHARGED",
+      result: "SUCCESS",
+
+      resourceType: "Wallet",
+      resourceId: result.wallet.walletId,
+
+      details: {
+        amount: result.transaction.amount,
+        currency: "RWF",
+        transactionId:
+          result.transaction.transactionId,
+
+        /*
+         * Do not log unnecessary payment secrets.
+         * The phone number is intentionally not
+         * stored in the audit details here.
+         */
+        newBalance: result.wallet.balance,
+      },
+
+      ipAddress: req.ip,
+    });
+
     return res.status(200).json({
       success: true,
       message: "Wallet recharged successfully",
+
       data: {
         ...result,
         currency: "RWF",
@@ -115,6 +161,7 @@ export async function viewTransactions(
 
     return res.status(200).json({
       success: true,
+
       data: {
         transactions,
         currency: "RWF",

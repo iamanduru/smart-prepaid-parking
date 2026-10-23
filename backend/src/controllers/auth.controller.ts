@@ -6,6 +6,8 @@ import { loginSchema } from "../validators/auth.validator";
 import { loginUser } from "../services/auth.service";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
 import { getCurrentUser } from "../services/auth.service";
+import { createAuditLog } from "../services/audit.service";
+
 
 export async function register(
   req: Request,
@@ -65,6 +67,19 @@ export async function login(
 
     const result = await loginUser(validation.data);
 
+    await createAuditLog({
+      actorId: result.user.id,
+      action: "LOGIN_SUCCESS",
+      result: "SUCCESS",
+      resourceType: "User",
+      resourceId: result.user.id,
+      details: {
+        email: result.user.email,
+        role: result.user.role,
+      },
+      ipAddress: req.ip,
+    });
+
     return res.status(200).json({
       success: true,
       message: "Login successful",
@@ -75,6 +90,21 @@ export async function login(
       error instanceof Error &&
       error.message === "INVALID_CREDENTIALS"
     ) {
+      await createAuditLog({
+        actorId: null,
+        action: "LOGIN_FAILED",
+        result: "FAILED",
+        resourceType: "User",
+        details: {
+          email:
+            typeof req.body?.email === "string"
+              ? req.body.email.toLowerCase()
+              : "unknown",
+          reason: "INVALID_CREDENTIALS",
+        },
+        ipAddress: req.ip,
+      });
+
       return res.status(401).json({
         success: false,
         message: "Invalid email or password",
