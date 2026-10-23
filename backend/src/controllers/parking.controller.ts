@@ -4,26 +4,29 @@ import {
   Response,
 } from "express";
 
+import { AuthenticatedRequest } from "../middleware/auth.middleware";
+
 import {
   endParkingSession,
   getParkingHistory,
   startParkingSession,
 } from "../services/parking.service";
 
+import { createAuditLog } from "../services/audit.service";
+
 import {
   parkingEntrySchema,
   parkingExitSchema,
 } from "../validators/parking.validator";
-import { AuthenticatedRequest } from "../middleware/auth.middleware";
+
 export async function parkingEntry(
   req: Request,
   res: Response,
   next: NextFunction
 ) {
   try {
-    const validation = parkingEntrySchema.safeParse(
-      req.body
-    );
+    const validation =
+      parkingEntrySchema.safeParse(req.body);
 
     if (!validation.success) {
       return res.status(400).json({
@@ -37,6 +40,28 @@ export async function parkingEntry(
     const result = await startParkingSession(
       validation.data
     );
+
+    await createAuditLog({
+      actorId: null,
+      action: "PARKING_ENTRY",
+      result: "SUCCESS",
+
+      resourceType: "ParkingSession",
+      resourceId: result.session.sessionId,
+
+      details: {
+        plateNumber:
+          result.session.vehicle.plateNumber,
+        facilityId:
+          result.session.facilityId,
+        walletBalance:
+          result.walletBalance,
+        currency: "RWF",
+        gateAction: result.gateAction,
+      },
+
+      ipAddress: req.ip,
+    });
 
     return res.status(201).json({
       success: true,
@@ -70,7 +95,8 @@ export async function parkingEntry(
 
         VEHICLE_TAG_MISMATCH: {
           status: 403,
-          message: "Vehicle identification failed",
+          message:
+            "Vehicle identification failed",
         },
 
         VEHICLE_TAG_INACTIVE: {
@@ -94,6 +120,33 @@ export async function parkingEntry(
       const mappedError = errors[error.message];
 
       if (mappedError) {
+        await createAuditLog({
+          actorId: null,
+          action: "PARKING_ENTRY",
+          result: "FAILED",
+
+          resourceType: "ParkingSession",
+
+          details: {
+            plateNumber:
+              typeof req.body?.plateNumber ===
+              "string"
+                ? req.body.plateNumber
+                : "unknown",
+
+            facilityId:
+              typeof req.body?.facilityId ===
+              "string"
+                ? req.body.facilityId
+                : "unknown",
+
+            reason: error.message,
+            gateAction: "DENY",
+          },
+
+          ipAddress: req.ip,
+        });
+
         return res
           .status(mappedError.status)
           .json({
@@ -114,9 +167,8 @@ export async function parkingExit(
   next: NextFunction
 ) {
   try {
-    const validation = parkingExitSchema.safeParse(
-      req.body
-    );
+    const validation =
+      parkingExitSchema.safeParse(req.body);
 
     if (!validation.success) {
       return res.status(400).json({
@@ -131,10 +183,39 @@ export async function parkingExit(
       validation.data
     );
 
-    /*
-     * Wallet does not contain enough money.
-     */
     if (result.paymentRequired) {
+      await createAuditLog({
+        actorId: null,
+        action: "PARKING_PAYMENT_PENDING",
+        result: "FAILED",
+
+        resourceType: "ParkingSession",
+        resourceId: result.session.sessionId,
+
+        details: {
+          plateNumber:
+            validation.data.plateNumber,
+
+          facilityId:
+            validation.data.facilityId,
+
+          fee: result.fee.totalFee,
+
+          walletBalance:
+            result.walletBalance,
+
+          shortfall:
+            "shortfall" in result
+              ? result.shortfall
+              : 0,
+
+          currency: "RWF",
+          gateAction: "DENY",
+        },
+
+        ipAddress: req.ip,
+      });
+
       return res.status(402).json({
         success: false,
         message:
@@ -142,6 +223,65 @@ export async function parkingExit(
         data: result,
       });
     }
+
+ 
+    if (
+      result.transaction &&
+      result.fee.totalFee > 0
+    ) {
+      await createAuditLog({
+        actorId: null,
+        action: "PARKING_PAYMENT_COMPLETED",
+        result: "SUCCESS",
+
+        resourceType: "Transaction",
+        resourceId:
+          result.transaction.transactionId,
+
+        details: {
+          sessionId:
+            result.session.sessionId,
+
+          amount:
+            result.fee.totalFee,
+
+          currency: "RWF",
+
+          walletBalance:
+            result.walletBalance,
+        },
+
+        ipAddress: req.ip,
+      });
+    }
+
+    await createAuditLog({
+      actorId: null,
+      action: "PARKING_EXIT",
+      result: "SUCCESS",
+
+      resourceType: "ParkingSession",
+      resourceId: result.session.sessionId,
+
+      details: {
+        plateNumber:
+          validation.data.plateNumber,
+
+        facilityId:
+          validation.data.facilityId,
+
+        totalMinutes:
+          result.fee.totalMinutes,
+
+        fee:
+          result.fee.totalFee,
+
+        currency: "RWF",
+        gateAction: result.gateAction,
+      },
+
+      ipAddress: req.ip,
+    });
 
     return res.status(200).json({
       success: true,
@@ -175,7 +315,8 @@ export async function parkingExit(
 
         VEHICLE_TAG_MISMATCH: {
           status: 403,
-          message: "Vehicle identification failed",
+          message:
+            "Vehicle identification failed",
         },
 
         VEHICLE_TAG_INACTIVE: {
@@ -228,6 +369,33 @@ export async function parkingExit(
       const mappedError = errors[error.message];
 
       if (mappedError) {
+        await createAuditLog({
+          actorId: null,
+          action: "PARKING_EXIT",
+          result: "FAILED",
+
+          resourceType: "ParkingSession",
+
+          details: {
+            plateNumber:
+              typeof req.body?.plateNumber ===
+              "string"
+                ? req.body.plateNumber
+                : "unknown",
+
+            facilityId:
+              typeof req.body?.facilityId ===
+              "string"
+                ? req.body.facilityId
+                : "unknown",
+
+            reason: error.message,
+            gateAction: "DENY",
+          },
+
+          ipAddress: req.ip,
+        });
+
         return res
           .status(mappedError.status)
           .json({
@@ -255,12 +423,12 @@ export async function parkingHistory(
       });
     }
 
-    const history = await getParkingHistory(
-      req.user.id
-    );
+    const history =
+      await getParkingHistory(req.user.id);
 
     return res.status(200).json({
       success: true,
+
       data: {
         history,
         currency: "RWF",

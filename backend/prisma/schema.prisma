@@ -33,6 +33,25 @@ enum TransactionStatus {
   FAILED
 }
 
+enum AuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  VEHICLE_REGISTERED
+  VEHICLE_TAG_LINKED
+  WALLET_RECHARGED
+  PARKING_ENTRY
+  PARKING_EXIT
+  PARKING_PAYMENT_COMPLETED
+  PARKING_PAYMENT_PENDING
+  PARKING_RATE_UPDATED
+  ADMIN_REPORT_VIEWED
+}
+
+enum AuditResult {
+  SUCCESS
+  FAILED
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -46,6 +65,8 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  auditLogs AuditLog[]
 }
 
 model Vehicle {
@@ -155,4 +176,27 @@ model ParkingRate {
   updatedAt DateTime @updatedAt
 
   @@unique([facilityId, minMinutes, maxMinutes])
+}
+
+model AuditLog {
+  auditId String @id @default(uuid())
+
+  actorId String?
+  action  AuditAction
+  result  AuditResult
+
+  resourceType String?
+  resourceId   String?
+
+  details Json?
+
+  ipAddress String?
+
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
 }
