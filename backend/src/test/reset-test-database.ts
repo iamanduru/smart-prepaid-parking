@@ -7,7 +7,8 @@ function assertSafeTestDatabase() {
     );
   }
 
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl =
+    process.env.DATABASE_URL;
 
   if (!databaseUrl) {
     throw new Error(
@@ -15,10 +16,13 @@ function assertSafeTestDatabase() {
     );
   }
 
-  const parsedDatabaseUrl = new URL(databaseUrl);
+  const parsedDatabaseUrl =
+    new URL(databaseUrl);
 
   const schema =
-    parsedDatabaseUrl.searchParams.get("schema");
+    parsedDatabaseUrl.searchParams.get(
+      "schema"
+    );
 
   if (schema !== "integration_test") {
     throw new Error(
@@ -37,6 +41,8 @@ export async function resetTestDatabase() {
   await prisma.parkingSession.deleteMany();
 
   await prisma.vehicleTag.deleteMany();
+
+  await prisma.scannerDevice.deleteMany();
 
   await prisma.parkingRate.deleteMany();
 

@@ -6,8 +6,17 @@ import {
   parkingHistory,
 } from "../controllers/parking.controller";
 
-import { authenticate } from "../middleware/auth.middleware";
-import { requireRole } from "../middleware/role.middleware";
+import {
+  authenticate,
+} from "../middleware/auth.middleware";
+
+import {
+  requireRole,
+} from "../middleware/role.middleware";
+
+import {
+  authenticateScanner,
+} from "../middleware/scanner-auth.middleware";
 
 const router = Router();
 
@@ -18,7 +27,16 @@ const router = Router();
  *     tags:
  *       - Parking
  *     summary: Start a parking session
- *     description: Verifies the parking facility, registered vehicle, linked vehicle tag, wallet, and existing sessions before creating an ACTIVE parking session and returning an OPEN gate action.
+ *     description: >
+ *       Authenticates a registered parking scanner,
+ *       verifies the vehicle and linked tag, checks
+ *       the parking facility, creates an active
+ *       parking session, and determines whether the
+ *       entry gate should open.
+ *
+ *     security:
+ *       - scannerAuth: []
+ *
  *     requestBody:
  *       required: true
  *       content:
@@ -32,27 +50,47 @@ const router = Router();
  *             properties:
  *               plateNumber:
  *                 type: string
- *                 example: RAC123A
+ *                 example: RSC001A
  *               tagId:
  *                 type: string
- *                 example: TAG-RAC123A-001
+ *                 example: TAG-SCANNER-001
  *               facilityId:
  *                 type: string
  *                 example: default-facility
+ *
  *     responses:
  *       201:
- *         description: Parking session started successfully
+ *         description: >
+ *           Parking session successfully created
+ *           and the entry gate may open.
+ *
  *       400:
  *         description: Invalid parking entry data
+ *
+ *       401:
+ *         description: >
+ *           Scanner authentication is missing,
+ *           invalid, or the scanner device is
+ *           inactive.
+ *
  *       403:
- *         description: Vehicle identification failed, tag inactive, or wallet missing
+ *         description: >
+ *           Scanner is not authorized for the
+ *           requested facility or vehicle
+ *           verification failed.
+ *
  *       404:
- *         description: Vehicle or parking facility not found
+ *         description: >
+ *           Parking facility or vehicle not found.
+ *
  *       409:
- *         description: Vehicle already has an open parking session
+ *         description: >
+ *           Vehicle already has an open parking
+ *           session.
  */
 router.post(
   "/entry",
+  authenticateScanner,
   parkingEntry
 );
 
@@ -63,7 +101,17 @@ router.post(
  *     tags:
  *       - Parking
  *     summary: End a parking session
- *     description: Verifies the vehicle and tag, retrieves the open parking session, calculates the parking fee, attempts wallet deduction, records the parking-fee transaction, and returns an OPEN or DENY gate action.
+ *     description: >
+ *       Authenticates a registered parking scanner,
+ *       verifies the vehicle and tag, retrieves the
+ *       open parking session, calculates the parking
+ *       fee, processes payment when required, closes
+ *       the session, and determines whether the exit
+ *       gate should open.
+ *
+ *     security:
+ *       - scannerAuth: []
+ *
  *     requestBody:
  *       required: true
  *       content:
@@ -77,27 +125,54 @@ router.post(
  *             properties:
  *               plateNumber:
  *                 type: string
- *                 example: RAC123A
+ *                 example: RSC001A
  *               tagId:
  *                 type: string
- *                 example: TAG-RAC123A-001
+ *                 example: TAG-SCANNER-001
  *               facilityId:
  *                 type: string
  *                 example: default-facility
+ *
  *     responses:
  *       200:
- *         description: Parking payment completed and exit granted
+ *         description: >
+ *           Parking session successfully completed
+ *           and the exit gate may open.
+ *
  *       400:
- *         description: Invalid parking exit data or duration
+ *         description: Invalid parking exit data
+ *
+ *       401:
+ *         description: >
+ *           Scanner authentication is missing,
+ *           invalid, or the scanner device is
+ *           inactive.
+ *
  *       402:
- *         description: Insufficient wallet balance; recharge required before exit
+ *         description: >
+ *           Vehicle owner's wallet has insufficient
+ *           balance. Recharge is required before
+ *           the gate can open.
+ *
  *       403:
- *         description: Vehicle identification failed, tag inactive, or wallet missing
+ *         description: >
+ *           Scanner is not authorized for the
+ *           requested facility or vehicle
+ *           verification failed.
+ *
  *       404:
- *         description: Vehicle, facility, or open parking session not found
+ *         description: >
+ *           Parking facility, vehicle, or open
+ *           parking session not found.
+ *
+ *       500:
+ *         description: >
+ *           Parking rates or session data are not
+ *           correctly configured.
  */
 router.post(
   "/exit",
+  authenticateScanner,
   parkingExit
 );
 
@@ -108,16 +183,24 @@ router.post(
  *     tags:
  *       - Parking
  *     summary: View parking history
- *     description: Returns parking sessions belonging only to vehicles owned by the authenticated Vehicle Owner.
+ *     description: >
+ *       Returns parking sessions belonging only
+ *       to the authenticated Vehicle Owner.
+ *
  *     security:
  *       - bearerAuth: []
+ *
  *     responses:
  *       200:
- *         description: Parking history returned successfully
+ *         description: Parking history retrieved
+ *
  *       401:
  *         description: Authentication required
+ *
  *       403:
- *         description: Vehicle Owner role required
+ *         description: >
+ *           Authenticated user does not have the
+ *           Vehicle Owner role.
  */
 router.get(
   "/history",
