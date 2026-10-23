@@ -1,7 +1,9 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import swaggerUi from "swagger-ui-express";
 
+import { swaggerSpec } from "./config/swagger";
 import { env } from "./config/env";
 import { errorHandler } from "./middleware/error.middleware";
 import { notFoundHandler } from "./middleware/not-found.middleware";
@@ -41,8 +43,13 @@ app.use("/api/wallet", walletRouter);
 app.use("/api/parking", parkingRouter);
 app.use("/api/admin", adminRouter);
 
-app.use(notFoundHandler);
+app.use(
+  "/api/docs",
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec)
+);
 
+app.use(notFoundHandler);
 app.use(errorHandler);
 
 export default app;
