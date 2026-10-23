@@ -1,4 +1,5 @@
 import request from "supertest";
+
 import {
   afterAll,
   beforeEach,
@@ -9,16 +10,17 @@ import {
 
 import app from "../app";
 import { prisma } from "../config/prisma";
+
+import {
+  hashScannerApiKey,
+} from "../utils/scanner-key";
+
 import { resetTestDatabase } from "../test/reset-test-database";
 
 describe("Parking API integration tests", () => {
-  /*
-   * Our reset helper removes parking facilities
-   * and rates as well as user data.
-   *
-   * Therefore each parking test needs a clean
-   * parking configuration before it begins.
-   */
+  const scannerApiKey =
+    "spk_integration_test_scanner_secret_001";
+
   async function seedParkingConfiguration() {
     await prisma.parkingFacility.create({
       data: {
@@ -104,33 +106,46 @@ describe("Parking API integration tests", () => {
     });
   }
 
+  async function createScannerDevice() {
+    return prisma.scannerDevice.create({
+      data: {
+        deviceCode:
+          "GATE-INTEGRATION-001",
+
+        name:
+          "Integration Test Gate Scanner",
+
+        facilityId:
+          "default-facility",
+
+        apiKeyHash:
+          hashScannerApiKey(
+            scannerApiKey
+          ),
+      },
+    });
+  }
+
   beforeEach(async () => {
     await resetTestDatabase();
+
     await seedParkingConfiguration();
+
+    await createScannerDevice();
   });
 
   afterAll(async () => {
     await resetTestDatabase();
+
     await prisma.$disconnect();
   });
 
-  /*
-   * Creates a complete driver setup:
-   *
-   * User
-   *  ↓
-   * Wallet
-   *  ↓
-   * Vehicle
-   *  ↓
-   * Vehicle Tag
-   *
-   * It returns everything needed by the
-   * parking entry/exit tests.
-   */
   async function createDriverSetup() {
-    const email = "parking.driver@example.com";
-    const password = "SecurePass123";
+    const email =
+      "parking.driver@example.com";
+
+    const password =
+      "SecurePass123";
 
     await request(app)
       .post("/api/auth/register")
@@ -141,30 +156,34 @@ describe("Parking API integration tests", () => {
         password,
       });
 
-    const loginResponse = await request(app)
-      .post("/api/auth/login")
-      .send({
-        email,
-        password,
-      });
+    const loginResponse =
+      await request(app)
+        .post("/api/auth/login")
+        .send({
+          email,
+          password,
+        });
 
     const token =
-      loginResponse.body.data.token as string;
+      loginResponse.body.data
+        .token as string;
 
-    const vehicleResponse = await request(app)
-      .post("/api/vehicles")
-      .set(
-        "Authorization",
-        `Bearer ${token}`
-      )
-      .send({
-        plateNumber: "RAC900A",
-        make: "Toyota",
-        model: "RAV4",
-      });
+    const vehicleResponse =
+      await request(app)
+        .post("/api/vehicles")
+        .set(
+          "Authorization",
+          `Bearer ${token}`
+        )
+        .send({
+          plateNumber: "RAC900A",
+          make: "Toyota",
+          model: "RAV4",
+        });
 
     const vehicleId =
-      vehicleResponse.body.data.vehicle.vehicleId;
+      vehicleResponse.body.data
+        .vehicle.vehicleId;
 
     await request(app)
       .post(
@@ -187,644 +206,991 @@ describe("Parking API integration tests", () => {
     };
   }
 
-  describe("POST /api/parking/entry", () => {
-    it("starts an active parking session and opens the gate", async () => {
-      const driver =
-        await createDriverSetup();
+  function scannerHeader() {
+    return {
+      "X-Scanner-Key":
+        scannerApiKey,
+    };
+  }
 
-      const response = await request(app)
-        .post("/api/parking/entry")
-        .send({
-          plateNumber: driver.plateNumber,
-          tagId: driver.tagId,
-          facilityId: driver.facilityId,
-        });
+  describe(
+    "Scanner authentication",
+    () => {
+      it("rejects a parking request without a scanner key", async () => {
+        const driver =
+          await createDriverSetup();
 
-      expect(response.status).toBe(201);
-      expect(response.body.success).toBe(true);
+        const response =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .send({
+              plateNumber:
+                driver.plateNumber,
 
-      expect(
-        response.body.data.gateAction
-      ).toBe("OPEN");
+              tagId:
+                driver.tagId,
 
-      expect(
-        response.body.data.session.status
-      ).toBe("ACTIVE");
+              facilityId:
+                driver.facilityId,
+            });
 
-      /*
-       * Verify the actual database session.
-       */
-      const session =
-        await prisma.parkingSession.findFirst({
-          where: {
-            vehicleId: driver.vehicleId,
-          },
-        });
+        expect(
+          response.status
+        ).toBe(401);
 
-      expect(session).not.toBeNull();
-      expect(session?.status).toBe("ACTIVE");
-      expect(session?.entryTime).not.toBeNull();
+        expect(
+          response.body.success
+        ).toBe(false);
 
-      /*
-       * Entry should produce an audit record.
-       */
-      const auditLog =
-        await prisma.auditLog.findFirst({
-          where: {
-            action: "PARKING_ENTRY",
-            result: "SUCCESS",
-          },
-        });
+        expect(
+          response.body.gateAction
+        ).toBe("DENY");
 
-      expect(auditLog).not.toBeNull();
+        
+        const sessions =
+          await prisma.parkingSession.count();
 
-      expect(
-        auditLog?.resourceId
-      ).toBe(session?.sessionId);
-    });
-
-    it("rejects a second entry while the vehicle already has an open session", async () => {
-      const driver =
-        await createDriverSetup();
-
-      const entryData = {
-        plateNumber: driver.plateNumber,
-        tagId: driver.tagId,
-        facilityId: driver.facilityId,
-      };
-
-      const firstResponse =
-        await request(app)
-          .post("/api/parking/entry")
-          .send(entryData);
-
-      expect(firstResponse.status).toBe(201);
-
-      const secondResponse =
-        await request(app)
-          .post("/api/parking/entry")
-          .send(entryData);
-
-      expect(secondResponse.status).toBe(
-        409
-      );
-
-      expect(
-        secondResponse.body.success
-      ).toBe(false);
-
-      expect(
-        secondResponse.body.gateAction
-      ).toBe("DENY");
-
-      /*
-       * There must still be only one open
-       * parking session.
-       */
-      const sessionCount =
-        await prisma.parkingSession.count();
-
-      expect(sessionCount).toBe(1);
-
-      /*
-       * Failed entry should also be auditable.
-       */
-      const failedAudit =
-        await prisma.auditLog.findFirst({
-          where: {
-            action: "PARKING_ENTRY",
-            result: "FAILED",
-          },
-        });
-
-      expect(failedAudit).not.toBeNull();
-    });
-  });
-
-  describe("POST /api/parking/exit", () => {
-    it("closes a free parking session without creating a payment transaction", async () => {
-      const driver =
-        await createDriverSetup();
-
-      const entryResponse =
-        await request(app)
-          .post("/api/parking/entry")
-          .send({
-            plateNumber:
-              driver.plateNumber,
-            tagId: driver.tagId,
-            facilityId:
-              driver.facilityId,
-          });
-
-      const sessionId =
-        entryResponse.body.data.session
-          .sessionId;
-
-      /*
-       * Instead of waiting 20 real minutes,
-       * move entryTime backwards in the test
-       * database.
-       *
-       * This simulates a 20-minute stay.
-       */
-      await prisma.parkingSession.update({
-        where: {
-          sessionId,
-        },
-        data: {
-          entryTime: new Date(
-            Date.now() - 20 * 60 * 1000
-          ),
-        },
+        expect(sessions).toBe(0);
       });
 
-      const exitResponse =
-        await request(app)
-          .post("/api/parking/exit")
-          .send({
-            plateNumber:
-              driver.plateNumber,
-            tagId: driver.tagId,
-            facilityId:
-              driver.facilityId,
-          });
+      it("rejects an invalid scanner key", async () => {
+        const driver =
+          await createDriverSetup();
 
-      expect(exitResponse.status).toBe(200);
+        const response =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(
+              "X-Scanner-Key",
+              "spk_this_key_is_not_valid"
+            )
+            .send({
+              plateNumber:
+                driver.plateNumber,
 
-      expect(
-        exitResponse.body.success
-      ).toBe(true);
+              tagId:
+                driver.tagId,
 
-      expect(
-        exitResponse.body.data.gateAction
-      ).toBe("OPEN");
+              facilityId:
+                driver.facilityId,
+            });
 
-      expect(
-        exitResponse.body.data.fee.totalFee
-      ).toBe(0);
+        expect(
+          response.status
+        ).toBe(401);
 
-      /*
-       * Free parking should not create a
-       * financial transaction.
-       */
-      expect(
-        exitResponse.body.data.transaction
-      ).toBeNull();
+        expect(
+          response.body.gateAction
+        ).toBe("DENY");
 
-      const transactionCount =
-        await prisma.transaction.count();
+        const sessions =
+          await prisma.parkingSession.count();
 
-      expect(transactionCount).toBe(0);
-
-      const session =
-        await prisma.parkingSession.findUnique({
-          where: {
-            sessionId,
-          },
-        });
-
-      expect(session?.status).toBe("CLOSED");
-      expect(session?.fee).toBe(0);
-
-      /*
-       * Wallet remains untouched.
-       */
-      const wallet =
-        await prisma.wallet.findFirst();
-
-      expect(wallet?.balance).toBe(0);
-
-      const exitAudit =
-        await prisma.auditLog.findFirst({
-          where: {
-            action: "PARKING_EXIT",
-            result: "SUCCESS",
-          },
-        });
-
-      expect(exitAudit).not.toBeNull();
-    });
-
-    it("deducts the correct fee and closes a paid parking session", async () => {
-      const driver =
-        await createDriverSetup();
-
-      /*
-       * Give the driver enough money first.
-       */
-      const rechargeResponse =
-        await request(app)
-          .post("/api/wallet/recharge")
-          .set(
-            "Authorization",
-            `Bearer ${driver.token}`
-          )
-          .send({
-            amount: 5000,
-            phoneNumber: "0788666666",
-          });
-
-      expect(rechargeResponse.status).toBe(
-        200
-      );
-
-      const entryResponse =
-        await request(app)
-          .post("/api/parking/entry")
-          .send({
-            plateNumber:
-              driver.plateNumber,
-            tagId: driver.tagId,
-            facilityId:
-              driver.facilityId,
-          });
-
-      const sessionId =
-        entryResponse.body.data.session
-          .sessionId;
-
-      /*
-       * Simulate approximately 95 minutes.
-       *
-       * 61–120 minutes = 1000 RWF.
-       */
-      await prisma.parkingSession.update({
-        where: {
-          sessionId,
-        },
-        data: {
-          entryTime: new Date(
-            Date.now() - 95 * 60 * 1000
-          ),
-        },
+        expect(sessions).toBe(0);
       });
 
-      const exitResponse =
-        await request(app)
-          .post("/api/parking/exit")
-          .send({
-            plateNumber:
-              driver.plateNumber,
-            tagId: driver.tagId,
-            facilityId:
-              driver.facilityId,
-          });
+      it("rejects an inactive scanner device", async () => {
+        const driver =
+          await createDriverSetup();
 
-      expect(exitResponse.status).toBe(200);
-
-      expect(
-        exitResponse.body.data.fee.totalFee
-      ).toBe(1000);
-
-      expect(
-        exitResponse.body.data.gateAction
-      ).toBe("OPEN");
-
-      /*
-       * 5000 - 1000 = 4000.
-       */
-      const wallet =
-        await prisma.wallet.findFirst();
-
-      expect(wallet?.balance).toBe(4000);
-
-      const session =
-        await prisma.parkingSession.findUnique({
+        await prisma.scannerDevice.update({
           where: {
-            sessionId,
+            deviceCode:
+              "GATE-INTEGRATION-001",
+          },
+          data: {
+            status: "INACTIVE",
           },
         });
 
-      expect(session?.status).toBe("CLOSED");
-      expect(session?.fee).toBe(1000);
+        const response =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(
+              "X-Scanner-Key",
+              scannerApiKey
+            )
+            .send({
+              plateNumber:
+                driver.plateNumber,
 
-      const payment =
-        await prisma.transaction.findFirst({
-          where: {
-            parkingSessionId: sessionId,
-            type: "PARKING_FEE",
-          },
-        });
+              tagId:
+                driver.tagId,
 
-      expect(payment).not.toBeNull();
-      expect(payment?.amount).toBe(1000);
+              facilityId:
+                driver.facilityId,
+            });
 
-      expect(payment?.status).toBe(
-        "COMPLETED"
-      );
+        expect(
+          response.status
+        ).toBe(401);
 
-      /*
-       * A real payment should generate
-       * its own payment audit event.
-       */
-      const paymentAudit =
-        await prisma.auditLog.findFirst({
-          where: {
-            action:
-              "PARKING_PAYMENT_COMPLETED",
-            result: "SUCCESS",
-          },
-        });
+        expect(
+          response.body.gateAction
+        ).toBe("DENY");
 
-      expect(paymentAudit).not.toBeNull();
-    });
+        const sessions =
+          await prisma.parkingSession.count();
 
-    it("locks the fee when balance is insufficient and completes exit after recharge", async () => {
-      const driver =
-        await createDriverSetup();
-
-      /*
-       * Driver begins with only 4000 RWF.
-       */
-      const initialRecharge =
-        await request(app)
-          .post("/api/wallet/recharge")
-          .set(
-            "Authorization",
-            `Bearer ${driver.token}`
-          )
-          .send({
-            amount: 4000,
-            phoneNumber: "0788666666",
-          });
-
-      expect(initialRecharge.status).toBe(
-        200
-      );
-
-      const entryResponse =
-        await request(app)
-          .post("/api/parking/entry")
-          .send({
-            plateNumber:
-              driver.plateNumber,
-            tagId: driver.tagId,
-            facilityId:
-              driver.facilityId,
-          });
-
-      const sessionId =
-        entryResponse.body.data.session
-          .sessionId;
-
-      /*
-       * Simulate a 9-hour stay.
-       *
-       * Anything above 8 hours and within
-       * 24 hours costs 10,000 RWF.
-       */
-      await prisma.parkingSession.update({
-        where: {
-          sessionId,
-        },
-        data: {
-          entryTime: new Date(
-            Date.now() - 9 * 60 * 60 * 1000
-          ),
-        },
+        expect(sessions).toBe(0);
       });
 
-      /*
-       * First exit attempt:
-       *
-       * fee     = 10,000
-       * balance = 4,000
-       * shortfall = 6,000
-       */
-      const firstExit =
-        await request(app)
-          .post("/api/parking/exit")
-          .send({
-            plateNumber:
-              driver.plateNumber,
-            tagId: driver.tagId,
+      it("rejects a scanner attempting to operate another parking facility", async () => {
+        const driver =
+          await createDriverSetup();
+
+        /*
+         * Create another legitimate facility.
+         *
+         * The scanner belongs only to
+         * default-facility.
+         */
+        await prisma.parkingFacility.create({
+          data: {
             facilityId:
-              driver.facilityId,
+              "second-facility",
+
+            name:
+              "Second Parking Facility",
+
+            location: "Kigali",
+          },
+        });
+
+        const response =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(
+              "X-Scanner-Key",
+              scannerApiKey
+            )
+            .send({
+              plateNumber:
+                driver.plateNumber,
+
+              tagId:
+                driver.tagId,
+
+              facilityId:
+                "second-facility",
+            });
+
+        expect(
+          response.status
+        ).toBe(403);
+
+        expect(
+          response.body.gateAction
+        ).toBe("DENY");
+
+        const sessions =
+          await prisma.parkingSession.count();
+
+        expect(sessions).toBe(0);
+      });
+    }
+  );
+
+  describe(
+    "POST /api/parking/entry",
+    () => {
+      it("starts an active parking session with a valid scanner and opens the gate", async () => {
+        const driver =
+          await createDriverSetup();
+
+        const response =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(scannerHeader())
+            .send({
+              plateNumber:
+                driver.plateNumber,
+
+              tagId:
+                driver.tagId,
+
+              facilityId:
+                driver.facilityId,
+            });
+
+        expect(
+          response.status
+        ).toBe(201);
+
+        expect(
+          response.body.success
+        ).toBe(true);
+
+        expect(
+          response.body.data.gateAction
+        ).toBe("OPEN");
+
+        expect(
+          response.body.data.session.status
+        ).toBe("ACTIVE");
+
+        const session =
+          await prisma.parkingSession.findFirst({
+            where: {
+              vehicleId:
+                driver.vehicleId,
+            },
           });
 
-      expect(firstExit.status).toBe(402);
+        expect(session).not.toBeNull();
 
-      expect(
-        firstExit.body.success
-      ).toBe(false);
+        expect(
+          session?.status
+        ).toBe("ACTIVE");
 
-      expect(
-        firstExit.body.data.gateAction
-      ).toBe("DENY");
+        expect(
+          session?.entryTime
+        ).not.toBeNull();
 
-      expect(
-        firstExit.body.data.fee.totalFee
-      ).toBe(10000);
+       
+        const scanner =
+          await prisma.scannerDevice.findUnique({
+            where: {
+              deviceCode:
+                "GATE-INTEGRATION-001",
+            },
+          });
 
-      expect(
-        firstExit.body.data.walletBalance
-      ).toBe(4000);
+        expect(
+          scanner?.lastUsedAt
+        ).not.toBeNull();
 
-      expect(
-        firstExit.body.data.shortfall
-      ).toBe(6000);
+        /*
+         * Parking audit should identify
+         * the physical scanner.
+         */
+        const auditLog =
+          await prisma.auditLog.findFirst({
+            where: {
+              action:
+                "PARKING_ENTRY",
 
-      /*
-       * The wallet must NOT be partially
-       * deducted.
-       */
-      let wallet =
-        await prisma.wallet.findFirst();
+              result:
+                "SUCCESS",
+            },
+          });
 
-      expect(wallet?.balance).toBe(4000);
+        expect(auditLog).not.toBeNull();
 
-      /*
-       * Session should remain open and wait
-       * for recharge.
-       */
-      const waitingSession =
-        await prisma.parkingSession.findUnique({
+        expect(
+          auditLog?.resourceId
+        ).toBe(
+          session?.sessionId
+        );
+
+        const details =
+          auditLog?.details as {
+            scannerDeviceId?: string;
+            scannerDeviceCode?: string;
+          } | null;
+
+        expect(
+          details?.scannerDeviceCode
+        ).toBe(
+          "GATE-INTEGRATION-001"
+        );
+
+        expect(
+          details?.scannerDeviceId
+        ).toBe(
+          scanner?.deviceId
+        );
+      });
+
+      it("rejects a second entry while the vehicle already has an open session", async () => {
+        const driver =
+          await createDriverSetup();
+
+        const entryData = {
+          plateNumber:
+            driver.plateNumber,
+
+          tagId:
+            driver.tagId,
+
+          facilityId:
+            driver.facilityId,
+        };
+
+        const firstResponse =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(scannerHeader())
+            .send(entryData);
+
+        expect(
+          firstResponse.status
+        ).toBe(201);
+
+        const secondResponse =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(scannerHeader())
+            .send(entryData);
+
+        expect(
+          secondResponse.status
+        ).toBe(409);
+
+        expect(
+          secondResponse.body.success
+        ).toBe(false);
+
+        expect(
+          secondResponse.body.gateAction
+        ).toBe("DENY");
+
+        const sessionCount =
+          await prisma.parkingSession.count();
+
+        expect(
+          sessionCount
+        ).toBe(1);
+
+        const failedAudit =
+          await prisma.auditLog.findFirst({
+            where: {
+              action:
+                "PARKING_ENTRY",
+
+              result:
+                "FAILED",
+            },
+          });
+
+        expect(
+          failedAudit
+        ).not.toBeNull();
+      });
+    }
+  );
+
+  describe(
+    "POST /api/parking/exit",
+    () => {
+      it("closes a free parking session without creating a payment transaction", async () => {
+        const driver =
+          await createDriverSetup();
+
+        const entryResponse =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(scannerHeader())
+            .send({
+              plateNumber:
+                driver.plateNumber,
+
+              tagId:
+                driver.tagId,
+
+              facilityId:
+                driver.facilityId,
+            });
+
+        const sessionId =
+          entryResponse.body.data
+            .session.sessionId;
+
+        /*
+         * Simulate 20 minutes of parking.
+         */
+        await prisma.parkingSession.update({
           where: {
             sessionId,
           },
-        });
-
-      expect(
-        waitingSession?.status
-      ).toBe("AWAITING_RECHARGE");
-
-      expect(
-        waitingSession?.fee
-      ).toBe(10000);
-
-      expect(
-        waitingSession?.exitTime
-      ).not.toBeNull();
-
-      /*
-       * Save the locked exit time and fee.
-       *
-       * These must not change when the driver
-       * comes back after recharging.
-       */
-      const lockedExitTime =
-        waitingSession?.exitTime;
-
-      const lockedFee =
-        waitingSession?.fee;
-
-      const pendingPayment =
-        await prisma.transaction.findFirst({
-          where: {
-            parkingSessionId: sessionId,
-            type: "PARKING_FEE",
+          data: {
+            entryTime: new Date(
+              Date.now() -
+                20 *
+                  60 *
+                  1000
+            ),
           },
         });
 
-      expect(pendingPayment).not.toBeNull();
+        const exitResponse =
+          await request(app)
+            .post(
+              "/api/parking/exit"
+            )
+            .set(scannerHeader())
+            .send({
+              plateNumber:
+                driver.plateNumber,
 
-      expect(
-        pendingPayment?.status
-      ).toBe("PENDING");
+              tagId:
+                driver.tagId,
 
-      expect(
-        pendingPayment?.amount
-      ).toBe(10000);
+              facilityId:
+                driver.facilityId,
+            });
 
-      const pendingTransactionId =
-        pendingPayment?.transactionId;
+        expect(
+          exitResponse.status
+        ).toBe(200);
 
-      /*
-       * Confirm the failed-payment audit event.
-       */
-      const pendingAudit =
-        await prisma.auditLog.findFirst({
-          where: {
-            action:
-              "PARKING_PAYMENT_PENDING",
-          },
-        });
+        expect(
+          exitResponse.body.success
+        ).toBe(true);
 
-      expect(pendingAudit).not.toBeNull();
+        expect(
+          exitResponse.body.data
+            .gateAction
+        ).toBe("OPEN");
 
-      /*
-       * Recharge exactly the 6000 RWF
-       * shortfall.
-       */
-      const rechargeResponse =
-        await request(app)
-          .post("/api/wallet/recharge")
-          .set(
-            "Authorization",
-            `Bearer ${driver.token}`
-          )
-          .send({
-            amount: 6000,
-            phoneNumber: "0788666666",
+        expect(
+          exitResponse.body.data.fee
+            .totalFee
+        ).toBe(0);
+
+        expect(
+          exitResponse.body.data
+            .transaction
+        ).toBeNull();
+
+        const transactionCount =
+          await prisma.transaction.count();
+
+        expect(
+          transactionCount
+        ).toBe(0);
+
+        const session =
+          await prisma.parkingSession.findUnique({
+            where: {
+              sessionId,
+            },
           });
 
-      expect(rechargeResponse.status).toBe(
-        200
-      );
+        expect(
+          session?.status
+        ).toBe("CLOSED");
 
-      wallet =
-        await prisma.wallet.findFirst();
+        expect(
+          session?.fee
+        ).toBe(0);
 
-      expect(wallet?.balance).toBe(10000);
+        const wallet =
+          await prisma.wallet.findFirst();
 
-      /*
-       * Retry the same exit.
-       */
-      const secondExit =
-        await request(app)
-          .post("/api/parking/exit")
-          .send({
-            plateNumber:
-              driver.plateNumber,
-            tagId: driver.tagId,
-            facilityId:
-              driver.facilityId,
+        expect(
+          wallet?.balance
+        ).toBe(0);
+
+        const exitAudit =
+          await prisma.auditLog.findFirst({
+            where: {
+              action:
+                "PARKING_EXIT",
+
+              result:
+                "SUCCESS",
+            },
           });
 
-      expect(secondExit.status).toBe(200);
+        expect(
+          exitAudit
+        ).not.toBeNull();
+      });
 
-      expect(
-        secondExit.body.data.gateAction
-      ).toBe("OPEN");
+      it("deducts the correct fee and closes a paid parking session", async () => {
+        const driver =
+          await createDriverSetup();
 
-      /*
-       * The fee must still be the original
-       * locked 10,000 RWF.
-       */
-      expect(
-        secondExit.body.data.fee.totalFee
-      ).toBe(10000);
+        const rechargeResponse =
+          await request(app)
+            .post(
+              "/api/wallet/recharge"
+            )
+            .set(
+              "Authorization",
+              `Bearer ${driver.token}`
+            )
+            .send({
+              amount: 5000,
 
-      /*
-       * The full fee is now deducted.
-       */
-      wallet =
-        await prisma.wallet.findFirst();
+              phoneNumber:
+                "0788666666",
+            });
 
-      expect(wallet?.balance).toBe(0);
+        expect(
+          rechargeResponse.status
+        ).toBe(200);
 
-      const completedSession =
-        await prisma.parkingSession.findUnique({
+        const entryResponse =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(scannerHeader())
+            .send({
+              plateNumber:
+                driver.plateNumber,
+
+              tagId:
+                driver.tagId,
+
+              facilityId:
+                driver.facilityId,
+            });
+
+        const sessionId =
+          entryResponse.body.data
+            .session.sessionId;
+
+        /*
+         * Simulate 95 minutes:
+         * 61–120 minutes = 1,000 RWF.
+         */
+        await prisma.parkingSession.update({
           where: {
             sessionId,
           },
-        });
-
-      expect(
-        completedSession?.status
-      ).toBe("CLOSED");
-
-      expect(
-        completedSession?.fee
-      ).toBe(lockedFee);
-
-      /*
-       * Most importantly, retrying exit must
-       * NOT move the locked exit time forward.
-       *
-       * Otherwise the driver could be charged
-       * more while standing at the gate trying
-       * to recharge.
-       */
-      expect(
-        completedSession?.exitTime?.getTime()
-      ).toBe(
-        lockedExitTime?.getTime()
-      );
-
-      /*
-       * The existing PENDING parking payment
-       * should have been completed rather than
-       * creating a second parking-fee payment.
-       */
-      const completedPayment =
-        await prisma.transaction.findUnique({
-          where: {
-            transactionId:
-              pendingTransactionId!,
+          data: {
+            entryTime: new Date(
+              Date.now() -
+                95 *
+                  60 *
+                  1000
+            ),
           },
         });
 
-      expect(
-        completedPayment?.status
-      ).toBe("COMPLETED");
+        const exitResponse =
+          await request(app)
+            .post(
+              "/api/parking/exit"
+            )
+            .set(scannerHeader())
+            .send({
+              plateNumber:
+                driver.plateNumber,
 
-      expect(
-        completedPayment?.amount
-      ).toBe(10000);
+              tagId:
+                driver.tagId,
 
-      const parkingFeeTransactionCount =
-        await prisma.transaction.count({
+              facilityId:
+                driver.facilityId,
+            });
+
+        expect(
+          exitResponse.status
+        ).toBe(200);
+
+        expect(
+          exitResponse.body.data.fee
+            .totalFee
+        ).toBe(1000);
+
+        expect(
+          exitResponse.body.data
+            .gateAction
+        ).toBe("OPEN");
+
+        const wallet =
+          await prisma.wallet.findFirst();
+
+        expect(
+          wallet?.balance
+        ).toBe(4000);
+
+        const session =
+          await prisma.parkingSession.findUnique({
+            where: {
+              sessionId,
+            },
+          });
+
+        expect(
+          session?.status
+        ).toBe("CLOSED");
+
+        expect(
+          session?.fee
+        ).toBe(1000);
+
+        const payment =
+          await prisma.transaction.findFirst({
+            where: {
+              parkingSessionId:
+                sessionId,
+
+              type:
+                "PARKING_FEE",
+            },
+          });
+
+        expect(payment).not.toBeNull();
+
+        expect(
+          payment?.amount
+        ).toBe(1000);
+
+        expect(
+          payment?.status
+        ).toBe(
+          "COMPLETED"
+        );
+
+        const paymentAudit =
+          await prisma.auditLog.findFirst({
+            where: {
+              action:
+                "PARKING_PAYMENT_COMPLETED",
+
+              result:
+                "SUCCESS",
+            },
+          });
+
+        expect(
+          paymentAudit
+        ).not.toBeNull();
+      });
+
+      it("locks the fee when balance is insufficient and completes exit after recharge", async () => {
+        const driver =
+          await createDriverSetup();
+
+        const initialRecharge =
+          await request(app)
+            .post(
+              "/api/wallet/recharge"
+            )
+            .set(
+              "Authorization",
+              `Bearer ${driver.token}`
+            )
+            .send({
+              amount: 4000,
+
+              phoneNumber:
+                "0788666666",
+            });
+
+        expect(
+          initialRecharge.status
+        ).toBe(200);
+
+        const entryResponse =
+          await request(app)
+            .post(
+              "/api/parking/entry"
+            )
+            .set(scannerHeader())
+            .send({
+              plateNumber:
+                driver.plateNumber,
+
+              tagId:
+                driver.tagId,
+
+              facilityId:
+                driver.facilityId,
+            });
+
+        const sessionId =
+          entryResponse.body.data
+            .session.sessionId;
+
+        await prisma.parkingSession.update({
           where: {
-            parkingSessionId: sessionId,
-            type: "PARKING_FEE",
+            sessionId,
+          },
+          data: {
+            entryTime: new Date(
+              Date.now() -
+                9 *
+                  60 *
+                  60 *
+                  1000
+            ),
           },
         });
 
-      expect(
-        parkingFeeTransactionCount
-      ).toBe(1);
-    });
-  });
+        const firstExit =
+          await request(app)
+            .post(
+              "/api/parking/exit"
+            )
+            .set(scannerHeader())
+            .send({
+              plateNumber:
+                driver.plateNumber,
+
+              tagId:
+                driver.tagId,
+
+              facilityId:
+                driver.facilityId,
+            });
+
+        expect(
+          firstExit.status
+        ).toBe(402);
+
+        expect(
+          firstExit.body.success
+        ).toBe(false);
+
+        expect(
+          firstExit.body.data
+            .gateAction
+        ).toBe("DENY");
+
+        expect(
+          firstExit.body.data.fee
+            .totalFee
+        ).toBe(10000);
+
+        expect(
+          firstExit.body.data
+            .walletBalance
+        ).toBe(4000);
+
+        expect(
+          firstExit.body.data
+            .shortfall
+        ).toBe(6000);
+
+        let wallet =
+          await prisma.wallet.findFirst();
+
+        /*
+         * No partial deduction.
+         */
+        expect(
+          wallet?.balance
+        ).toBe(4000);
+
+        const waitingSession =
+          await prisma.parkingSession.findUnique({
+            where: {
+              sessionId,
+            },
+          });
+
+        expect(
+          waitingSession?.status
+        ).toBe(
+          "AWAITING_RECHARGE"
+        );
+
+        expect(
+          waitingSession?.fee
+        ).toBe(10000);
+
+        expect(
+          waitingSession?.exitTime
+        ).not.toBeNull();
+
+        const lockedExitTime =
+          waitingSession?.exitTime;
+
+        const lockedFee =
+          waitingSession?.fee;
+
+        const pendingPayment =
+          await prisma.transaction.findFirst({
+            where: {
+              parkingSessionId:
+                sessionId,
+
+              type:
+                "PARKING_FEE",
+            },
+          });
+
+        expect(
+          pendingPayment
+        ).not.toBeNull();
+
+        expect(
+          pendingPayment?.status
+        ).toBe("PENDING");
+
+        expect(
+          pendingPayment?.amount
+        ).toBe(10000);
+
+        const pendingTransactionId =
+          pendingPayment?.transactionId;
+
+        const pendingAudit =
+          await prisma.auditLog.findFirst({
+            where: {
+              action:
+                "PARKING_PAYMENT_PENDING",
+            },
+          });
+
+        expect(
+          pendingAudit
+        ).not.toBeNull();
+
+        /*
+         * Recharge exactly the shortfall.
+         */
+        const rechargeResponse =
+          await request(app)
+            .post(
+              "/api/wallet/recharge"
+            )
+            .set(
+              "Authorization",
+              `Bearer ${driver.token}`
+            )
+            .send({
+              amount: 6000,
+
+              phoneNumber:
+                "0788666666",
+            });
+
+        expect(
+          rechargeResponse.status
+        ).toBe(200);
+
+        wallet =
+          await prisma.wallet.findFirst();
+
+        expect(
+          wallet?.balance
+        ).toBe(10000);
+
+        /*
+         * Retry exit with the same authenticated
+         * scanner.
+         */
+        const secondExit =
+          await request(app)
+            .post(
+              "/api/parking/exit"
+            )
+            .set(scannerHeader())
+            .send({
+              plateNumber:
+                driver.plateNumber,
+
+              tagId:
+                driver.tagId,
+
+              facilityId:
+                driver.facilityId,
+            });
+
+        expect(
+          secondExit.status
+        ).toBe(200);
+
+        expect(
+          secondExit.body.data
+            .gateAction
+        ).toBe("OPEN");
+
+        /*
+         * Fee must still be the original
+         * locked 10,000 RWF.
+         */
+        expect(
+          secondExit.body.data.fee
+            .totalFee
+        ).toBe(10000);
+
+        wallet =
+          await prisma.wallet.findFirst();
+
+        expect(
+          wallet?.balance
+        ).toBe(0);
+
+        const completedSession =
+          await prisma.parkingSession.findUnique({
+            where: {
+              sessionId,
+            },
+          });
+
+        expect(
+          completedSession?.status
+        ).toBe("CLOSED");
+
+        expect(
+          completedSession?.fee
+        ).toBe(lockedFee);
+
+        /*
+         * Retry must not move the original
+         * locked exit time.
+         */
+        expect(
+          completedSession
+            ?.exitTime
+            ?.getTime()
+        ).toBe(
+          lockedExitTime
+            ?.getTime()
+        );
+
+        /*
+         * The original pending payment becomes
+         * completed instead of creating another
+         * parking-fee transaction.
+         */
+        const completedPayment =
+          await prisma.transaction.findUnique({
+            where: {
+              transactionId:
+                pendingTransactionId!,
+            },
+          });
+
+        expect(
+          completedPayment?.status
+        ).toBe(
+          "COMPLETED"
+        );
+
+        expect(
+          completedPayment?.amount
+        ).toBe(10000);
+
+        const parkingFeeTransactionCount =
+          await prisma.transaction.count({
+            where: {
+              parkingSessionId:
+                sessionId,
+
+              type:
+                "PARKING_FEE",
+            },
+          });
+
+        expect(
+          parkingFeeTransactionCount
+        ).toBe(1);
+      });
+    }
+  );
 });

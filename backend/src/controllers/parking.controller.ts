@@ -1,10 +1,13 @@
 import {
   NextFunction,
-  Request,
   Response,
 } from "express";
 
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
+
+import {
+  ScannerAuthenticatedRequest,
+} from "../middleware/scanner-auth.middleware";
 
 import {
   endParkingSession,
@@ -20,11 +23,19 @@ import {
 } from "../validators/parking.validator";
 
 export async function parkingEntry(
-  req: Request,
+  req: ScannerAuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) {
   try {
+    if (!req.scannerDevice) {
+      return res.status(401).json({
+        success: false,
+        message: "Scanner authentication required",
+        gateAction: "DENY",
+      });
+    }
+
     const validation =
       parkingEntrySchema.safeParse(req.body);
 
@@ -34,6 +45,7 @@ export async function parkingEntry(
         message: "Invalid parking entry data",
         errors:
           validation.error.flatten().fieldErrors,
+        gateAction: "DENY",
       });
     }
 
@@ -50,14 +62,25 @@ export async function parkingEntry(
       resourceId: result.session.sessionId,
 
       details: {
+        scannerDeviceId:
+          req.scannerDevice.deviceId,
+
+        scannerDeviceCode:
+          req.scannerDevice.deviceCode,
+
         plateNumber:
           result.session.vehicle.plateNumber,
+
         facilityId:
           result.session.facilityId,
+
         walletBalance:
           result.walletBalance,
+
         currency: "RWF",
-        gateAction: result.gateAction,
+
+        gateAction:
+          result.gateAction,
       },
 
       ipAddress: req.ip,
@@ -117,7 +140,8 @@ export async function parkingEntry(
         },
       };
 
-      const mappedError = errors[error.message];
+      const mappedError =
+        errors[error.message];
 
       if (mappedError) {
         await createAuditLog({
@@ -125,9 +149,18 @@ export async function parkingEntry(
           action: "PARKING_ENTRY",
           result: "FAILED",
 
-          resourceType: "ParkingSession",
+          resourceType:
+            "ParkingSession",
 
           details: {
+            scannerDeviceId:
+              req.scannerDevice?.deviceId ??
+              null,
+
+            scannerDeviceCode:
+              req.scannerDevice?.deviceCode ??
+              null,
+
             plateNumber:
               typeof req.body?.plateNumber ===
               "string"
@@ -141,6 +174,7 @@ export async function parkingEntry(
                 : "unknown",
 
             reason: error.message,
+
             gateAction: "DENY",
           },
 
@@ -162,11 +196,19 @@ export async function parkingEntry(
 }
 
 export async function parkingExit(
-  req: Request,
+  req: ScannerAuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) {
   try {
+    if (!req.scannerDevice) {
+      return res.status(401).json({
+        success: false,
+        message: "Scanner authentication required",
+        gateAction: "DENY",
+      });
+    }
+
     const validation =
       parkingExitSchema.safeParse(req.body);
 
@@ -176,6 +218,7 @@ export async function parkingExit(
         message: "Invalid parking exit data",
         errors:
           validation.error.flatten().fieldErrors,
+        gateAction: "DENY",
       });
     }
 
@@ -186,20 +229,31 @@ export async function parkingExit(
     if (result.paymentRequired) {
       await createAuditLog({
         actorId: null,
-        action: "PARKING_PAYMENT_PENDING",
+        action:
+          "PARKING_PAYMENT_PENDING",
         result: "FAILED",
 
-        resourceType: "ParkingSession",
-        resourceId: result.session.sessionId,
+        resourceType:
+          "ParkingSession",
+
+        resourceId:
+          result.session.sessionId,
 
         details: {
+          scannerDeviceId:
+            req.scannerDevice.deviceId,
+
+          scannerDeviceCode:
+            req.scannerDevice.deviceCode,
+
           plateNumber:
             validation.data.plateNumber,
 
           facilityId:
             validation.data.facilityId,
 
-          fee: result.fee.totalFee,
+          fee:
+            result.fee.totalFee,
 
           walletBalance:
             result.walletBalance,
@@ -210,6 +264,7 @@ export async function parkingExit(
               : 0,
 
           currency: "RWF",
+
           gateAction: "DENY",
         },
 
@@ -224,21 +279,29 @@ export async function parkingExit(
       });
     }
 
- 
+    
     if (
       result.transaction &&
       result.fee.totalFee > 0
     ) {
       await createAuditLog({
         actorId: null,
-        action: "PARKING_PAYMENT_COMPLETED",
+        action:
+          "PARKING_PAYMENT_COMPLETED",
         result: "SUCCESS",
 
         resourceType: "Transaction",
+
         resourceId:
           result.transaction.transactionId,
 
         details: {
+          scannerDeviceId:
+            req.scannerDevice.deviceId,
+
+          scannerDeviceCode:
+            req.scannerDevice.deviceCode,
+
           sessionId:
             result.session.sessionId,
 
@@ -261,9 +324,17 @@ export async function parkingExit(
       result: "SUCCESS",
 
       resourceType: "ParkingSession",
-      resourceId: result.session.sessionId,
+
+      resourceId:
+        result.session.sessionId,
 
       details: {
+        scannerDeviceId:
+          req.scannerDevice.deviceId,
+
+        scannerDeviceCode:
+          req.scannerDevice.deviceCode,
+
         plateNumber:
           validation.data.plateNumber,
 
@@ -277,7 +348,9 @@ export async function parkingExit(
           result.fee.totalFee,
 
         currency: "RWF",
-        gateAction: result.gateAction,
+
+        gateAction:
+          result.gateAction,
       },
 
       ipAddress: req.ip,
@@ -285,7 +358,8 @@ export async function parkingExit(
 
     return res.status(200).json({
       success: true,
-      message: "Parking payment completed",
+      message:
+        "Parking payment completed",
       data: result,
     });
   } catch (error) {
@@ -344,7 +418,8 @@ export async function parkingExit(
 
         INVALID_PARKING_DURATION: {
           status: 400,
-          message: "Invalid parking duration",
+          message:
+            "Invalid parking duration",
         },
 
         PARKING_RATES_NOT_FOUND: {
@@ -366,7 +441,8 @@ export async function parkingExit(
         },
       };
 
-      const mappedError = errors[error.message];
+      const mappedError =
+        errors[error.message];
 
       if (mappedError) {
         await createAuditLog({
@@ -374,9 +450,18 @@ export async function parkingExit(
           action: "PARKING_EXIT",
           result: "FAILED",
 
-          resourceType: "ParkingSession",
+          resourceType:
+            "ParkingSession",
 
           details: {
+            scannerDeviceId:
+              req.scannerDevice?.deviceId ??
+              null,
+
+            scannerDeviceCode:
+              req.scannerDevice?.deviceCode ??
+              null,
+
             plateNumber:
               typeof req.body?.plateNumber ===
               "string"
@@ -390,6 +475,7 @@ export async function parkingExit(
                 : "unknown",
 
             reason: error.message,
+
             gateAction: "DENY",
           },
 
@@ -419,12 +505,15 @@ export async function parkingHistory(
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: "Authentication required",
+        message:
+          "Authentication required",
       });
     }
 
     const history =
-      await getParkingHistory(req.user.id);
+      await getParkingHistory(
+        req.user.id
+      );
 
     return res.status(200).json({
       success: true,

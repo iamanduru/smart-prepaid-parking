@@ -52,6 +52,11 @@ enum AuditResult {
   FAILED
 }
 
+enum ScannerDeviceStatus {
+  ACTIVE
+  INACTIVE
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -116,6 +121,7 @@ model ParkingFacility {
 
   parkingSessions ParkingSession[]
   rates           ParkingRate[]
+  scannerDevices  ScannerDevice[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -199,4 +205,28 @@ model AuditLog {
   @@index([actorId])
   @@index([action])
   @@index([createdAt])
+}
+
+model ScannerDevice {
+  deviceId String @id @default(uuid())
+
+  deviceCode String @unique
+
+  name String
+
+  apiKeyHash String @unique
+
+  status ScannerDeviceStatus @default(ACTIVE)
+
+  facilityId String
+
+  facility ParkingFacility @relation(fields: [facilityId], references: [facilityId], onDelete: Restrict)
+
+  lastUsedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([facilityId])
+  @@index([status])
 }
