@@ -1,7 +1,12 @@
-import { prisma } from "../config/prisma";
+import {
+  databaseSchema,
+  prisma,
+} from "../config/prisma";
 
 function assertSafeTestDatabase() {
-  if (process.env.NODE_ENV !== "test") {
+  if (
+    process.env.NODE_ENV !== "test"
+  ) {
     throw new Error(
       "SAFETY STOP: Database reset is only allowed when NODE_ENV=test."
     );
@@ -19,14 +24,27 @@ function assertSafeTestDatabase() {
   const parsedDatabaseUrl =
     new URL(databaseUrl);
 
-  const schema =
+  const urlSchema =
     parsedDatabaseUrl.searchParams.get(
       "schema"
     );
 
-  if (schema !== "integration_test") {
+  if (
+    urlSchema !==
+    "integration_test"
+  ) {
     throw new Error(
-      `SAFETY STOP: Refusing to reset schema "${schema ?? "public"}". Expected "integration_test".`
+      `SAFETY STOP: Refusing to reset URL schema "${urlSchema ?? "public"}". Expected "integration_test".`
+    );
+  }
+
+  
+  if (
+    databaseSchema !==
+    "integration_test"
+  ) {
+    throw new Error(
+      `SAFETY STOP: Prisma runtime is configured for schema "${databaseSchema}". Expected "integration_test".`
     );
   }
 }
