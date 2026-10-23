@@ -1,12 +1,40 @@
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../generated/prisma/client";
+
+import {
+  PrismaClient,
+} from "../generated/prisma/client";
 
 import { env } from "./env";
 
-const adapter = new PrismaPg({
-  connectionString: env.DATABASE_URL,
-});
+function resolveDatabaseSchema(
+  databaseUrl: string
+) {
+  const parsedUrl =
+    new URL(databaseUrl);
 
-export const prisma = new PrismaClient({
-  adapter,
-});
+  return (
+    parsedUrl.searchParams.get("schema") ??
+    "public"
+  );
+}
+
+export const databaseSchema =
+  resolveDatabaseSchema(
+    env.DATABASE_URL
+  );
+
+const adapter =
+  new PrismaPg(
+    {
+      connectionString:
+        env.DATABASE_URL,
+    },
+    {
+      schema: databaseSchema,
+    }
+  );
+
+export const prisma =
+  new PrismaClient({
+    adapter,
+  });
