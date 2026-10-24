@@ -6,18 +6,19 @@ import {
   viewWallet,
 } from "../controllers/wallet.controller";
 
-import { authenticate } from "../middleware/auth.middleware";
-import { requireRole } from "../middleware/role.middleware";
+import {
+  authenticate,
+} from "../middleware/auth.middleware";
+
+import {
+  requireRole,
+} from "../middleware/role.middleware";
+
+import {
+  walletRechargeRateLimiter,
+} from "../middleware/rate-limit.middleware";
 
 const router = Router();
-
-/*
- * All Wallet routes require:
- * 1. A valid JWT
- * 2. VEHICLE_OWNER role
- */
-router.use(authenticate);
-router.use(requireRole("VEHICLE_OWNER"));
 
 /**
  * @openapi
@@ -26,12 +27,16 @@ router.use(requireRole("VEHICLE_OWNER"));
  *     tags:
  *       - Wallet
  *     summary: View wallet balance
- *     description: Returns the prepaid parking wallet belonging to the authenticated Vehicle Owner.
+ *     description: >
+ *       Returns the prepaid wallet belonging to
+ *       the authenticated Vehicle Owner.
+ *
  *     security:
  *       - bearerAuth: []
+ *
  *     responses:
  *       200:
- *         description: Wallet returned successfully
+ *         description: Wallet retrieved successfully
  *       401:
  *         description: Authentication required
  *       403:
@@ -41,6 +46,8 @@ router.use(requireRole("VEHICLE_OWNER"));
  */
 router.get(
   "/",
+  authenticate,
+  requireRole("VEHICLE_OWNER"),
   viewWallet
 );
 
@@ -50,13 +57,18 @@ router.get(
  *   get:
  *     tags:
  *       - Wallet
- *     summary: View wallet transaction history
- *     description: Returns recharge and parking-fee transactions belonging to the authenticated Vehicle Owner.
+ *     summary: View wallet transactions
+ *     description: >
+ *       Returns recharge and parking-payment
+ *       transactions belonging only to the
+ *       authenticated Vehicle Owner.
+ *
  *     security:
  *       - bearerAuth: []
+ *
  *     responses:
  *       200:
- *         description: Transactions returned successfully
+ *         description: Transactions retrieved successfully
  *       401:
  *         description: Authentication required
  *       403:
@@ -66,6 +78,8 @@ router.get(
  */
 router.get(
   "/transactions",
+  authenticate,
+  requireRole("VEHICLE_OWNER"),
   viewTransactions
 );
 
@@ -76,9 +90,17 @@ router.get(
  *     tags:
  *       - Wallet
  *     summary: Recharge prepaid wallet
- *     description: Adds money to the authenticated Vehicle Owner's wallet. The current development implementation uses a mock successful payment flow; real MoMo integration will replace this later.
+ *     description: >
+ *       Adds funds to the authenticated Vehicle
+ *       Owner's prepaid wallet using the current
+ *       development payment adapter.
+ *
+ *       Recharge attempts are rate-limited per
+ *       authenticated user to reduce payment abuse.
+ *
  *     security:
  *       - bearerAuth: []
+ *
  *     requestBody:
  *       required: true
  *       content:
@@ -91,12 +113,11 @@ router.get(
  *             properties:
  *               amount:
  *                 type: integer
- *                 minimum: 500
  *                 example: 5000
- *                 description: Recharge amount in RWF.
  *               phoneNumber:
  *                 type: string
  *                 example: "0788000000"
+ *
  *     responses:
  *       200:
  *         description: Wallet recharged successfully
@@ -108,9 +129,23 @@ router.get(
  *         description: Vehicle Owner role required
  *       404:
  *         description: Wallet not found
+ *       429:
+ *         description: Too many wallet recharge attempts
  */
 router.post(
   "/recharge",
+
+  /*
+   * Authenticate first so the limiter can
+   * identify the actual user rather than
+   * relying only on IP address.
+   */
+  authenticate,
+
+  requireRole("VEHICLE_OWNER"),
+
+  walletRechargeRateLimiter,
+
   recharge
 );
 
