@@ -18,6 +18,11 @@ import {
   authenticateScanner,
 } from "../middleware/scanner-auth.middleware";
 
+import {
+  scannerDeviceRateLimiter,
+  scannerIpRateLimiter,
+} from "../middleware/rate-limit.middleware";
+
 const router = Router();
 
 /**
@@ -33,6 +38,10 @@ const router = Router();
  *       the parking facility, creates an active
  *       parking session, and determines whether the
  *       entry gate should open.
+ *
+ *       Scanner requests are protected by both
+ *       pre-authentication IP rate limiting and
+ *       authenticated per-device rate limiting.
  *
  *     security:
  *       - scannerAuth: []
@@ -60,37 +69,41 @@ const router = Router();
  *
  *     responses:
  *       201:
- *         description: >
- *           Parking session successfully created
- *           and the entry gate may open.
- *
+ *         description: Parking session created and gate opened
  *       400:
  *         description: Invalid parking entry data
- *
  *       401:
- *         description: >
- *           Scanner authentication is missing,
- *           invalid, or the scanner device is
- *           inactive.
- *
+ *         description: Missing, invalid, or inactive scanner credentials
  *       403:
- *         description: >
- *           Scanner is not authorized for the
- *           requested facility or vehicle
- *           verification failed.
- *
+ *         description: Scanner not authorized for facility or vehicle verification failed
  *       404:
- *         description: >
- *           Parking facility or vehicle not found.
- *
+ *         description: Parking facility or vehicle not found
  *       409:
- *         description: >
- *           Vehicle already has an open parking
- *           session.
+ *         description: Vehicle already has an open parking session
+ *       429:
+ *         description: Scanner request rate limit exceeded
  */
 router.post(
   "/entry",
+
+  /*
+   * First protect the authentication layer
+   * against excessive requests from one
+   * network source.
+   */
+  scannerIpRateLimiter,
+
+  /*
+   * Then authenticate the physical scanner.
+   */
   authenticateScanner,
+
+  /*
+   * Finally apply a quota to the authenticated
+   * scanner itself using its deviceId.
+   */
+  scannerDeviceRateLimiter,
+
   parkingEntry
 );
 
@@ -102,12 +115,16 @@ router.post(
  *       - Parking
  *     summary: End a parking session
  *     description: >
- *       Authenticates a registered parking scanner,
- *       verifies the vehicle and tag, retrieves the
- *       open parking session, calculates the parking
- *       fee, processes payment when required, closes
- *       the session, and determines whether the exit
- *       gate should open.
+ *       Authenticates a registered scanner,
+ *       verifies the vehicle and tag, retrieves
+ *       the parking session, calculates the fee,
+ *       processes payment when required, closes
+ *       the session, and determines whether the
+ *       exit gate should open.
+ *
+ *       Scanner requests are protected by both
+ *       IP-based and authenticated device-based
+ *       rate limits.
  *
  *     security:
  *       - scannerAuth: []
@@ -135,44 +152,31 @@ router.post(
  *
  *     responses:
  *       200:
- *         description: >
- *           Parking session successfully completed
- *           and the exit gate may open.
- *
+ *         description: Parking session completed and gate opened
  *       400:
  *         description: Invalid parking exit data
- *
  *       401:
- *         description: >
- *           Scanner authentication is missing,
- *           invalid, or the scanner device is
- *           inactive.
- *
+ *         description: Missing, invalid, or inactive scanner credentials
  *       402:
- *         description: >
- *           Vehicle owner's wallet has insufficient
- *           balance. Recharge is required before
- *           the gate can open.
- *
+ *         description: Insufficient wallet balance
  *       403:
- *         description: >
- *           Scanner is not authorized for the
- *           requested facility or vehicle
- *           verification failed.
- *
+ *         description: Scanner not authorized for facility or vehicle verification failed
  *       404:
- *         description: >
- *           Parking facility, vehicle, or open
- *           parking session not found.
- *
+ *         description: Facility, vehicle, or open parking session not found
+ *       429:
+ *         description: Scanner request rate limit exceeded
  *       500:
- *         description: >
- *           Parking rates or session data are not
- *           correctly configured.
+ *         description: Parking configuration or session error
  */
 router.post(
   "/exit",
+
+  scannerIpRateLimiter,
+
   authenticateScanner,
+
+  scannerDeviceRateLimiter,
+
   parkingExit
 );
 
@@ -193,14 +197,10 @@ router.post(
  *     responses:
  *       200:
  *         description: Parking history retrieved
- *
  *       401:
  *         description: Authentication required
- *
  *       403:
- *         description: >
- *           Authenticated user does not have the
- *           Vehicle Owner role.
+ *         description: Vehicle Owner role required
  */
 router.get(
   "/history",

@@ -13,6 +13,9 @@ import vehicleRouter from "./routes/vehicle.routes";
 import walletRouter from "./routes/wallet.routes";
 import parkingRouter from "./routes/parking.routes";
 import adminRouter from "./routes/admin.routes";
+import {
+  generalApiLimiter,
+} from "./middleware/rate-limit.middleware";
 
 const app = express();
 
@@ -35,6 +38,8 @@ app.get("/api/health", (_req, res) => {
     message: "Smart Prepaid Parking API is running",
   });
 });
+
+app.use("/api", generalApiLimiter);
 
 // Routes here
 app.use("/api/auth", authRouter);
